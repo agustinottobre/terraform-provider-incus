@@ -582,6 +582,38 @@ func TestAccInstance_noProfile(t *testing.T) {
 	})
 }
 
+func TestAccInstance_profileWithDevices(t *testing.T) {
+	profileName := petname.Generate(2, "-")
+	instanceName := petname.Generate(2, "-")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccInstance_profileWithDevices(profileName, instanceName),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("incus_profile.profile1", "name", profileName),
+					resource.TestCheckResourceAttr("incus_profile.profile1", "device.#", "1"),
+					resource.TestCheckResourceAttr("incus_profile.profile1", "device.0.name", "root"),
+					resource.TestCheckResourceAttr("incus_profile.profile1", "device.0.type", "disk"),
+					resource.TestCheckResourceAttr("incus_profile.profile1", "device.0.properties.pool", "default"),
+					resource.TestCheckResourceAttr("incus_profile.profile1", "device.0.properties.path", "/"),
+					resource.TestCheckResourceAttr("incus_profile.profile1", "device.0.properties.initial.zfs.delegate", "true"),
+					resource.TestCheckResourceAttr("incus_instance.instance1", "name", instanceName),
+					resource.TestCheckResourceAttr("incus_instance.instance1", "status", "Running"),
+					resource.TestCheckResourceAttr("incus_instance.instance1", "profiles.#", "2"),
+					resource.TestCheckResourceAttr("incus_instance.instance1", "profiles.0", "default"),
+					resource.TestCheckResourceAttr("incus_instance.instance1", "profiles.1", profileName),
+					// Instance should NOT have devices in state even though profile has devices
+					// This is the key fix - profile-derived devices are excluded from state
+					resource.TestCheckResourceAttr("incus_instance.instance1", "device.#", "0"),
+				),
+			},
+		},
+	})
+}
+
 func TestAccInstance_device(t *testing.T) {
 	instanceName := petname.Generate(2, "-")
 
@@ -2506,4 +2538,28 @@ resource "incus_instance" "instance1" {
   }
 }
 	`, networkName, instanceName, acctest.TestImage)
+}
+
+func testAccInstance_profileWithDevices(profileName, instanceName string) string {
+	return fmt.Sprintf(`
+resource "incus_profile" "profile1" {
+  name = "%s"
+
+  device {
+    name = "root"
+    type = "disk"
+    properties = {
+      pool                   = "default"
+      path                   = "/"
+      "initial.zfs.delegate" = "true"
+    }
+  }
+}
+
+resource "incus_instance" "instance1" {
+  name     = "%s"
+  image    = "%s"
+  profiles = ["default", incus_profile.profile1.name]
+}
+`, profileName, instanceName, acctest.TestImage)
 }
