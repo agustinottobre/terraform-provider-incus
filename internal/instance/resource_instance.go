@@ -1352,11 +1352,32 @@ func (r InstanceResource) SyncState(ctx context.Context, tfState *tfsdk.State, s
 		return respDiags
 	}
 
-	if !m.SourceFile.IsNull() && !m.Devices.IsNull() {
-		// Using device to signal the storage pool is a special case, which is not
-		// reflected on the instance state and therefore we need to compensate here
+	// Handle device merging to prevent inconsistent provider results.
+	// This can happen when Incus creates additional devices (like root disk with ZFS delegation)
+	// that weren't explicitly specified in the Terraform configuration.
+
+	// Check if user explicitly defined devices in their configuration
+	userDefinedDevices := !m.Devices.IsNull() && len(m.Devices.Elements()) > 0
+
+	if userDefinedDevices {
+		// User explicitly specified devices - use their configuration
+		devices = m.Devices
+	} else if !m.SourceFile.IsNull() {
+		// Special case for source_file (with or without explicit devices)
+		// This is not reflected on the instance state and therefore we need to compensate here
 		// in order to prevent inconsistent provider results.
 		devices = m.Devices
+	} else {
+		// No user-defined devices and not source_file case
+		// The instance may have devices from profiles, but we should NOT include them
+		// in the state to prevent inconsistent provider results.
+		// Set devices to empty since user didn't define any.
+		deviceType := map[string]attr.Type{
+			"name":       types.StringType,
+			"type":       types.StringType,
+			"properties": types.MapType{ElemType: types.StringType},
+		}
+		devices = types.SetNull(types.ObjectType{AttrTypes: deviceType})
 	}
 
 	m.Name = types.StringValue(instance.Name)
